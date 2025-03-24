@@ -41,6 +41,7 @@ API_SECRET = ""
 LAST_TRADE_PRICE = {}
 MIN_PROFIT_EUR = 10.0
 MIN_PROFIT_PCT = 1.0
+CHART_LINES = {}
 
 
 
@@ -62,6 +63,28 @@ def calculate_trend(prices):
     y = np.array(prices)
     slope, _ = np.polyfit(x, y, 1)
     return slope
+
+# ----------------- Chart Update -----------------
+def update_chart_lines(ax, pair):
+    ax.clear()
+    prices = PRICE_HISTORY.get(pair, [])
+    if not prices:
+        return
+
+    x = np.arange(len(prices))
+    ax.plot(x, prices, label=pair)
+
+    last_price = prices[-1]
+    next_buy = LAST_BUY_PRICE.get(pair, 0) * (1 - REENTRY_THRESHOLD)
+    next_sell = LAST_BUY_PRICE.get(pair, 0) * (1 + TAKE_PROFIT_DYNAMIC)
+    stop_loss = LAST_BUY_PRICE.get(pair, 0) * (1 - STOP_LOSS_DYNAMIC)
+
+    ax.axhline(y=next_buy, color='green', linestyle='--', label='Next Buy')
+    ax.axhline(y=next_sell, color='blue', linestyle='--', label='Next Sell')
+    ax.axhline(y=stop_loss, color='red', linestyle='--', label='Stop-Loss')
+
+    ax.set_title(f"{pair} Chart mit Handelssignalen")
+    ax.legend()
 
 # ----------------- BotThread -----------------
 class BotThread(QThread):
