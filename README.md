@@ -6,7 +6,7 @@ made by @frickl with help from ChatGPT
 If you find this project helpful you might 
 want to donate a coffee or more ..?
 
-LTC : LYdJyyv7cr91SJjAPxLmhjAKt9c7QMzY6c
+LTC : LVwX9iHQaVFws6Y1AwKpkh7dxVY7vZoPGt
 
 BTC : 3JjFKm4WYFJTjpGJgRfFFpWRjkSAhMFdtx
  
