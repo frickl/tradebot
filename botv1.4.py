@@ -144,6 +144,39 @@ def execute_trade(pair, side, volume, price, reason):
             msg = f"[SIMUL] Nicht genug {'EUR' if side == 'buy' else pair} für {side.upper()}"
         print("[DEBUG] " + msg)
         TRADES.append(msg)
+    else:
+        try:
+            nonce = str(int(time.time() * 1000))
+            url_path = "/0/private/AddOrder"
+            url = f"{KRAKEN_API_URL}{url_path}"
+            order_data = {
+                "nonce": nonce,
+                "ordertype": "limit",
+                "type": side,
+                "volume": str(volume),
+                "pair": pair,
+                "price": str(price),
+                "validate": False
+            }
+            post_data = urllib.parse.urlencode(order_data)
+            message = url_path.encode() + hashlib.sha256(post_data.encode()).digest()
+            signature = hmac.new(base64.b64decode(API_SECRET), message, hashlib.sha512)
+            sig_b64 = base64.b64encode(signature.digest())
+            headers = {
+                "API-Key": API_KEY,
+                "API-Sign": sig_b64.decode()
+            }
+            response = requests.post(url, headers=headers, data=order_data)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("error"):
+                print(f"[REAL] Trade-Fehler: {data['error']}")
+            else:
+                msg = f"[REAL] {side.upper()} {volume} {pair} @ {price:.2f} — Grund: {reason}"
+                print("[DEBUG] " + msg)
+                TRADES.append(msg)
+        except Exception as e:
+            print(f"[ERROR] execute_trade (REAL): {e}")
 
 
 # ----------------- Pair-Auswahl von Kraken -----------------
@@ -202,6 +235,10 @@ class MainWindow(QMainWindow):
         self.chart_button = QPushButton("Show Charts")
         self.chart_button.clicked.connect(self.show_charts)
         self.left_layout.addWidget(self.chart_button)
+
+        self.export_button = QPushButton("Export CSV Log")
+        self.export_button.clicked.connect(export_trade_log)
+        self.left_layout.addWidget(self.export_button)
 
         self.start_button = QPushButton("Start Bot")
         self.start_button.clicked.connect(self.start_bot)
