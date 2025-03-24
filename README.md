@@ -17,6 +17,8 @@ Thank you!
 Installation:
 
 You need python3 with some extra modules.
+use : pip install <module>
+
 * PyQt6
 * matplotlib
 * xcffib
