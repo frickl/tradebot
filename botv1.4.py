@@ -39,6 +39,9 @@ KRAKEN_API_URL = "https://api.kraken.com"
 API_KEY = ""
 API_SECRET = ""
 LAST_TRADE_PRICE = {}
+MIN_PROFIT_EUR = 10.0
+MIN_PROFIT_PCT = 1.0
+
 
 
 # ----------------- Initialkäufe bei Botstart -----------------
@@ -51,6 +54,14 @@ def perform_initial_trades():
             LAST_BUY_PRICE[pair] = price
             LAST_TRADE_TIME[pair] = time.time()
 
+# ----------------- Trendanalyse (lineare Regression) -----------------
+def calculate_trend(prices):
+    if len(prices) < 10:
+        return 0
+    x = np.arange(len(prices))
+    y = np.array(prices)
+    slope, _ = np.polyfit(x, y, 1)
+    return slope
 
 # ----------------- BotThread -----------------
 class BotThread(QThread):
@@ -76,9 +87,10 @@ class BotThread(QThread):
 
                     rsi = calculate_rsi(PRICE_HISTORY[pair])
                     sma, upper, lower = calculate_bollinger(PRICE_HISTORY[pair])
+                    trend = calculate_trend(PRICE_HISTORY[pair])
 
                     if rsi is not None and lower is not None and upper is not None:
-                        if rsi < 30 and price < lower:
+                        if rsi < 30 and price < lower and trend > 0:
                             last_trade = LAST_TRADE_TIME.get(pair, 0)
                             if time.time() - last_trade < TRADE_COOLDOWN_SECONDS:
                                 print(f"[DEBUG] Kauf gesperrt für {pair}: Cooldown läuft.")
@@ -88,12 +100,22 @@ class BotThread(QThread):
                                 print(
                                     f"[DEBUG] Kein Reentry-Kauf für {pair}: Preis {price:.2f} nahe letztem Kauf {last_buy:.2f}.")
                                 continue
-                            execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}")
+                            execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}, Trend={trend:.2f}")
                             LAST_TRADE_TIME[pair] = time.time()
                             LAST_BUY_PRICE[pair] = price
-                        elif rsi > 70 and price > upper:
-                            execute_trade(pair, "sell", amount, price, f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}")
-                            LAST_TRADE_TIME[pair] = time.time()
+                        elif rsi > 70 and price > upper and trend < 0:
+                                last_buy = LAST_BUY_PRICE.get(pair)
+                                if last_buy is None:
+                                    continue
+                                gain_eur = (price - last_buy) * amount
+                                gain_pct = (price - last_buy) / last_buy * 100
+                                if gain_eur < MIN_PROFIT_EUR or gain_pct < MIN_PROFIT_PCT:
+                                    print(f"[DEBUG] Kein Verkauf: Gewinn ({gain_eur:.2f} EUR / {gain_pct:.2f}%) zu gering.")
+                                    continue
+                                execute_trade(pair, "sell", amount, price,
+f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}, Trend={trend:.2f}")
+
+                                LAST_TRADE_TIME[pair] = time.time()
 
                 self.update_gui.emit()
                 time.sleep(5)
@@ -422,12 +444,12 @@ class MainWindow(QMainWindow):
                         pair = parts[3]
                         price = parts[5]
                         reason = last_entry.split("Grund:")[-1].strip()
+                        sim_label = "SIMUL" if "[SIMUL]" in last_entry else "REAL"
                         now = datetime.now()
                         writer.writerow([
                             now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), pair,
-                            action.upper(), volume, price, reason
+                            action.upper(), volume, price, sim_label, reason
                         ])
-
             self.trade_list.clear()  # ← jetzt korrekt
             for entry in TRADES[-20:]:
                 self.trade_list.addItem(QListWidgetItem(entry))
