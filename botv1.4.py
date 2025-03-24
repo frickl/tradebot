@@ -211,6 +211,10 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_bot)
         self.left_layout.addWidget(self.stop_button)
 
+        self.license_button = QPushButton("License / Info")
+        self.license_button.clicked.connect(self.show_license)
+        self.left_layout.addWidget(self.license_button)
+
         self.status_display = QTextEdit()
         self.status_display.setReadOnly(True)
         self.left_layout.addWidget(self.status_display)
@@ -320,6 +324,22 @@ class MainWindow(QMainWindow):
             self.status_display.append(f"[INFO] Paar gelöscht: {pair}")
             if self.chart_window:
                 self.chart_window.remove_chart_tab(pair)
+
+    def show_license(self):
+        info = QMessageBox(self)
+        info.setWindowTitle("Lizenz und Haftungshinweis")
+        info.setText(
+            """
+            Kraken Trade Bot v1.0
+
+            Lizenz: GPLv3
+            Diese Software wird ohne Gewährleistung bereitgestellt.
+            Bei Nutzung im Real-Modus haften Sie selbst für Verluste.
+            Prüfen Sie alle Funktionen sorgfältig vor echtem Einsatz.
+            """
+        )
+        info.exec()
+
 
     def show_charts(self):
         if not self.chart_window:
