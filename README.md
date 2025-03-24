@@ -14,6 +14,20 @@ Thank you!
 
 ################################
 
+Installation:
+
+You need python3 with some extra modules.
+* PyQt6
+* matplotlib
+* xcffib
+* requests
+
+I recommend a virtual environment (venv).
+Easy setup can be done by using a tool
+like PyCharm (Community Edition) or vscode
+
+################################
+
 Usage:
 
 This bot runs in a Simulation Mode when started.
