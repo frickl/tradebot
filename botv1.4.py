@@ -289,3 +289,11 @@ class ChartWindow(QWidget):
             ax.set_title(f"{pair} – letzte 100 Preise")
             ax.legend()
             canvas.draw()
+
+#######################
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
