@@ -20,6 +20,9 @@ import urllib.parse
 import csv
 
 # ----------------- Globale Konfiguration -----------------
+LAST_TRADE_TIME = {}
+LAST_BUY_PRICE = {}
+TRADE_COOLDOWN_SECONDS = 60
 TRADE_PAIRS = {"XETHZEUR": 0.01, "SOLEUR": 0.2}
 PRICE_HISTORY = {pair: [] for pair in TRADE_PAIRS}
 SIMUL_ASSETS = {pair: 0.0 for pair in TRADE_PAIRS}
@@ -68,6 +71,17 @@ class BotThread(QThread):
 
                     if rsi is not None and lower is not None and upper is not None:
                         if rsi < 30 and price < lower:
+    last_trade = LAST_TRADE_TIME.get(pair, 0)
+    if time.time() - last_trade < TRADE_COOLDOWN_SECONDS:
+        print(f"[DEBUG] Kauf gesperrt für {pair}: Cooldown läuft.")
+        continue
+    last_buy = LAST_BUY_PRICE.get(pair)
+    if last_buy is not None and price >= last_buy * (1 - REENTRY_THRESHOLD):
+        print(f"[DEBUG] Kein Reentry-Kauf für {pair}: Preis {price:.2f} nahe letztem Kauf {last_buy:.2f}.")
+        continue
+    execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}")
+    LAST_TRADE_TIME[pair] = time.time()
+    LAST_BUY_PRICE[pair] = price
                             execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}")
                         elif rsi > 70 and price > upper:
                             execute_trade(pair, "sell", amount, price, f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}")
@@ -220,27 +234,22 @@ class MainWindow(QMainWindow):
     def show_portfolio(self):
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Portfolio")
-
-        try:
-            message = f"Wallet: {SIMUL_WALLET_VALUE:.2f} EUR\n"
-            total = SIMUL_WALLET_VALUE
-            for pair, amount in SIMUL_ASSETS.items():
-                price = fetch_price(pair)
-                value = amount * price if price else 0
-                message += f"{pair}: {amount:.4f} = {value:.2f} EUR\n"
-                total += value
-
-            gain = total - 1000.0
-            pct = (gain / 1000.0) * 100
-            message += f"\nGesamtwert: {total:.2f} EUR\nGewinn/Verlust: {gain:.2f} EUR ({pct:.2f}%)"
-
-            dialog.setText(message)
-            dialog.exec()
-
-        except Exception as e:
-            print(f"[ERROR] show_portfolio: {e}")
-            QMessageBox.warning(self, "Fehler", f"Fehler beim Berechnen des Portfolios:\n{e}")
-
+        message = f"Wallet: {SIMUL_WALLET_VALUE:.2f} EUR
+"
+        total = SIMUL_WALLET_VALUE
+        for pair, amount in SIMUL_ASSETS.items():
+            price = fetch_price(pair)
+            value = amount * price if price else 0
+            message += f"{pair}: {amount:.4f} = {value:.2f} EUR
+"
+            total += value
+        gain = total - 1000.0
+        pct = (gain / 1000.0) * 100
+        message += f"
+Gesamtwert: {total:.2f} EUR
+Gewinn/Verlust: {gain:.2f} EUR ({pct:.2f}%)"
+        dialog.setText(message)
+        dialog.exec()
 
     def update_trade_list(self):
         self.trade_list.clear()
