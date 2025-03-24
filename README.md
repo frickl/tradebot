@@ -6,9 +6,9 @@ made by @frickl with help from ChatGPT
 If you find this project helpful you might 
 want to donate a coffee or more ..?
 
-LTC LYdJyyv7cr91SJjAPxLmhjAKt9c7QMzY6c
+LTC : LYdJyyv7cr91SJjAPxLmhjAKt9c7QMzY6c
 
-BTC 3JjFKm4WYFJTjpGJgRfFFpWRjkSAhMFdtx
+BTC : 3JjFKm4WYFJTjpGJgRfFFpWRjkSAhMFdtx
  
 Thank you!
 
@@ -22,6 +22,9 @@ pairs SOL - EUR and ETH - EUR
 More pairs can be added or deleted.
 Chart information will be displayed for all
 pairs ín use.
+After adding API key information real trade is possible;
+a toggle button switches to real mode.
+
 Trade decisions are made by:
 
 * RSI
