@@ -82,6 +82,8 @@ class BotThread(QThread):
     execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}")
     LAST_TRADE_TIME[pair] = time.time()
     LAST_BUY_PRICE[pair] = price
+    LAST_TRADE_TIME[pair] = time.time()
+    LAST_BUY_PRICE[pair] = price
                             execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}")
                         elif rsi > 70 and price > upper:
                             execute_trade(pair, "sell", amount, price, f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}")
