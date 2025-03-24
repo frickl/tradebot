@@ -411,33 +411,29 @@ class MainWindow(QMainWindow):
 
     def update_trade_list(self):
         try:
-            # Nur den letzten Trade extrahieren
-            entry = TRADES[-1]
-            parts = entry.split()
-            if len(parts) >= 6 and "@" in entry:
-                action = parts[1]
-                volume = parts[2]
-                pair = parts[3]
-                price = parts[5]
-                reason = entry.split("Grund:")[-1].strip()
-                now = datetime.now()
-                # CSV Logging mit Steuer-ähnlicher Formatierung
+            last_entry = TRADES[-1] if TRADES else None
+            if last_entry:
                 with open("trade_log.csv", mode="a", newline="", encoding="utf-8") as file:
-                    writer = csv.writer(file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                    writer.writerow([
-                        now.strftime("%Y-%m-%d"),
-                        now.strftime("%H:%M:%S"),
-                        pair,
-                        action.upper(),
-                        volume,
-                        price,
-                        reason
-                    ])
-                # GUI-Trade-Log
-                line = f"[{now.strftime('%H:%M:%S')}] {entry}"
-                self.trade_list.addItem(QListWidgetItem(line))
+                    writer = csv.writer(file)
+                    parts = last_entry.split()
+                    if len(parts) >= 6 and "@" in last_entry:
+                        action = parts[1]
+                        volume = parts[2]
+                        pair = parts[3]
+                        price = parts[5]
+                        reason = last_entry.split("Grund:")[-1].strip()
+                        now = datetime.now()
+                        writer.writerow([
+                            now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), pair,
+                            action.upper(), volume, price, reason
+                        ])
+
+            self.trade_list.clear()  # ← jetzt korrekt
+            for entry in TRADES[-20:]:
+                self.trade_list.addItem(QListWidgetItem(entry))
+
         except Exception as e:
-            print(f"[WARN] update_trade_list fehlgeschlagen: {e}")
+            print(f"[WARN] Logging in update_trade_list fehlgeschlagen: {e}")
 
 
 
