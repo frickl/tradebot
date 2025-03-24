@@ -41,6 +41,17 @@ API_SECRET = ""
 LAST_TRADE_PRICE = {}
 
 
+# ----------------- Initialkäufe bei Botstart -----------------
+def perform_initial_trades():
+    global SIMUL_ASSETS, SIMUL_WALLET_VALUE
+    for pair, amount in TRADE_PAIRS.items():
+        price = fetch_price(pair)
+        if price and SIMUL and SIMUL_ASSETS[pair] == 0.0:
+            execute_trade(pair, "buy", amount, price, "Initialkauf (SIMUL)")
+            LAST_BUY_PRICE[pair] = price
+            LAST_TRADE_TIME[pair] = time.time()
+
+
 # ----------------- BotThread -----------------
 class BotThread(QThread):
     update_gui = pyqtSignal()
@@ -65,10 +76,6 @@ class BotThread(QThread):
 
                     rsi = calculate_rsi(PRICE_HISTORY[pair])
                     sma, upper, lower = calculate_bollinger(PRICE_HISTORY[pair])
-
-                    if SIMUL and SIMUL_ASSETS[pair] == 0.0:
-                        execute_trade(pair, "buy", amount, price, "Initialkauf (SIMUL)")
-                        continue
 
                     if rsi is not None and lower is not None and upper is not None:
                         if rsi < 30 and price < lower:
@@ -236,9 +243,6 @@ class MainWindow(QMainWindow):
         self.chart_button.clicked.connect(self.show_charts)
         self.left_layout.addWidget(self.chart_button)
 
-        self.export_button = QPushButton("Export CSV Log")
-        self.export_button.clicked.connect(export_trade_log)
-        self.left_layout.addWidget(self.export_button)
 
         self.start_button = QPushButton("Start Bot")
         self.start_button.clicked.connect(self.start_bot)
@@ -323,10 +327,12 @@ class MainWindow(QMainWindow):
 
     def start_bot(self):
         if not self.bot_thread:
+            perform_initial_trades()  # <<< hier der neue Initialkauf
             self.bot_thread = BotThread()
             self.bot_thread.update_gui.connect(self.update_trade_list)
             self.bot_thread.start()
             self.status_display.append("[INFO] Bot gestartet.")
+
 
     def stop_bot(self):
         if self.bot_thread:
@@ -403,11 +409,36 @@ class MainWindow(QMainWindow):
             print("[ERROR] show_portfolio:", e)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Berechnen des Portfolios:\n{e}")
 
-
     def update_trade_list(self):
-        self.trade_list.clear()
-        for entry in TRADES[-20:]:
-            self.trade_list.addItem(QListWidgetItem(entry))
+        try:
+            # Nur den letzten Trade extrahieren
+            entry = TRADES[-1]
+            parts = entry.split()
+            if len(parts) >= 6 and "@" in entry:
+                action = parts[1]
+                volume = parts[2]
+                pair = parts[3]
+                price = parts[5]
+                reason = entry.split("Grund:")[-1].strip()
+                now = datetime.now()
+                # CSV Logging mit Steuer-ähnlicher Formatierung
+                with open("trade_log.csv", mode="a", newline="", encoding="utf-8") as file:
+                    writer = csv.writer(file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                    writer.writerow([
+                        now.strftime("%Y-%m-%d"),
+                        now.strftime("%H:%M:%S"),
+                        pair,
+                        action.upper(),
+                        volume,
+                        price,
+                        reason
+                    ])
+                # GUI-Trade-Log
+                line = f"[{now.strftime('%H:%M:%S')}] {entry}"
+                self.trade_list.addItem(QListWidgetItem(line))
+        except Exception as e:
+            print(f"[WARN] update_trade_list fehlgeschlagen: {e}")
+
 
 
 # ----------------- ChartWindow -----------------
@@ -454,11 +485,22 @@ class ChartWindow(QWidget):
         canvas, ax = self.canvases[pair]
         ax.clear()
         prices = PRICE_HISTORY.get(pair, [])
-        if prices:
-            ax.plot(prices[-100:], label=pair)
-            ax.set_title(f"{pair} – letzte 100 Preise")
-            ax.legend()
-            canvas.draw()
+        if not prices:
+            return
+        ax.plot(prices[-100:], label="Price", color="blue")
+
+                # Zusätzliche Linien
+        current_price = prices[-1]
+        next_buy = current_price * (1 - REENTRY_THRESHOLD)
+        next_sell = current_price * (1 + TAKE_PROFIT_DYNAMIC)
+        stop_loss = current_price * (1 - STOP_LOSS_DYNAMIC)
+        ax.axhline(y=next_buy, color="green", linestyle="--", label="Next Buy")
+        ax.axhline(y=next_sell, color="red", linestyle="--", label="Next Sell")
+        ax.axhline(y=stop_loss, color="orange", linestyle=":", label="Stop-Loss")
+
+        ax.set_title(f"{pair} – letzte 100 Preise")
+        ax.legend()
+        canvas.draw()
 
 
 #######################
