@@ -43,7 +43,7 @@ MIN_PROFIT_EUR = 10.0
 MIN_PROFIT_PCT = 1.0
 CHART_LINES = {}
 
-
+chart_window_instance = None
 
 # ----------------- Initialkäufe bei Botstart -----------------
 def perform_initial_trades():
@@ -64,18 +64,24 @@ def calculate_trend(prices):
     slope, _ = np.polyfit(x, y, 1)
     return slope
 
-# ----------------- Fibonacci-Level -----------------
-def calculate_fibonacci_levels(prices):
-    if not prices:
-        return None, None, None
-    high = max(prices)
-    low = min(prices)
-    level_0 = high
-    level_382 = high - (high - low) * 0.382
-    level_618 = high - (high - low) * 0.618
-    return level_0, level_382, level_618
 
-# ----------------- Chart Update -----------------
+# ----------------- Fibonacci-Level -----------------
+def calculate_fibonacci_levels(prices, lookback=50):
+    """Calculate Fibonacci retracement levels with improved stability"""
+    if len(prices) < 2:
+        return None, None, None
+
+    # Use most recent lookback period
+    recent_prices = prices[-lookback:] if len(prices) > lookback else prices
+    high = max(recent_prices)
+    low = min(recent_prices)
+    diff = high - low
+
+    return (
+        high,  # 0% level
+        high - diff * 0.382,  # 38.2% level
+        high - diff * 0.618  # 61.8% level
+    )
 
 # ----------------- Chart Linien aktualisieren inkl. Fibonacci -----------------
 def update_chart_lines(ax, pair):
@@ -103,7 +109,40 @@ def update_chart_lines(ax, pair):
         if fib382: ax.axhline(y=fib382, color="purple", linestyle="--", linewidth=1, label="Fibo 38.2")
         if fib618: ax.axhline(y=fib618, color="purple", linestyle="--", linewidth=1, label="Fibo 61.8")
 
+        # Trendlinie
+        trend = calculate_trend(prices)
+        if trend:
+            x_vals = np.arange(len(prices))
+            trend_line = trend * x_vals + prices[0]
+            ax.plot(x_vals, trend_line, linestyle="-.", color="gray", label="Trend")
+
     ax.legend()
+
+# ----------------- Update Trade-Liste (GUI + CSV Logging) -----------------
+def update_trade_list(gui_list_widget):
+    try:
+        last_entry = TRADES[-1] if TRADES else None
+        if last_entry:
+            with open("trade_log.csv", mode="a") as file:
+                writer = csv.writer(file)
+                parts = last_entry.split()
+                if len(parts) >= 6 and "@" in last_entry:
+                    action = parts[1]
+                    volume = parts[2]
+                    pair = parts[3]
+                    price = parts[5]
+                    reason = last_entry.split("Grund:")[-1].strip()
+                    sim_label = "SIMUL" if "[SIMUL]" in last_entry else "REAL"
+                    now = datetime.now()
+                    writer.writerow([
+                        now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), pair,
+                        action.upper(), volume, price, sim_label, reason
+                    ])
+        gui_list_widget.clear()
+        for entry in TRADES[-20:]:
+            gui_list_widget.addItem(QListWidgetItem(entry))
+    except Exception as e:
+        print(f"[WARN] Logging in update_trade_list fehlgeschlagen: {e}")
 
 
 # ----------------- BotThread -----------------
@@ -141,33 +180,39 @@ class BotThread(QThread):
                                 continue
                             last_buy = LAST_BUY_PRICE.get(pair)
                             if last_buy is not None and price >= last_buy * (1 - REENTRY_THRESHOLD):
-                                print(
-                                    f"[DEBUG] Kein Reentry-Kauf für {pair}: Preis {price:.2f} nahe letztem Kauf {last_buy:.2f}.")
+                                print(f"[DEBUG] Kein Reentry-Kauf für {pair}: Preis {price:.2f} nahe letztem Kauf {last_buy:.2f}.")
                                 continue
-                            execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}, Trend={trend:.2f}, Fibo={fib618:.2f}")
+                            execute_trade(pair, "buy", amount, price,
+                                f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}, Trend={trend:.2f}, Fibo={fib618:.2f}")
                             LAST_TRADE_TIME[pair] = time.time()
                             LAST_BUY_PRICE[pair] = price
-                        elif rsi > 70 and price > upper and trend < 0:
-                                last_buy = LAST_BUY_PRICE.get(pair)
-                                if last_buy is None:
-                                    continue
-                                gain_eur = (price - last_buy) * amount
-                                gain_pct = (price - last_buy) / last_buy * 100
-                                if gain_eur < MIN_PROFIT_EUR or gain_pct < MIN_PROFIT_PCT:
-                                    print(f"[DEBUG] Kein Verkauf: Gewinn ({gain_eur:.2f} EUR / {gain_pct:.2f}%) zu gering.")
-                                    continue
-                                execute_trade(pair, "sell", amount, price,
-f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}, Trend={trend:.2f}")
 
-                                LAST_TRADE_TIME[pair] = time.time()
+                        elif rsi > 70 and price > upper and trend < 0:
+                            last_buy = LAST_BUY_PRICE.get(pair)
+                            if last_buy is None:
+                                continue
+                            gain_eur = (price - last_buy) * amount
+                            gain_pct = (price - last_buy) / last_buy * 100
+                            if gain_eur < MIN_PROFIT_EUR or gain_pct < MIN_PROFIT_PCT:
+                                print(f"[DEBUG] Kein Verkauf: Gewinn ({gain_eur:.2f} EUR / {gain_pct:.2f}%) zu gering.")
+                                continue
+                            execute_trade(pair, "sell", amount, price,
+                                f"Signal: RSI={rsi:.2f}, BB-High={upper:.2f}, Trend={trend:.2f}")
+                            LAST_TRADE_TIME[pair] = time.time()
 
                 self.update_gui.emit()
+
+                if chart_window_instance and hasattr(chart_window_instance, 'canvases'):
+                    for pair in chart_window_instance.canvases:
+                        chart_window_instance.update_chart(pair)
+
                 time.sleep(5)
             except Exception as e:
                 print(f"[ERROR] in BotThread.run: {e}")
 
     def stop(self):
         self.running = False
+
 
 
 # ----------------- Hilfsfunktionen -----------------
@@ -326,7 +371,7 @@ class MainWindow(QMainWindow):
         self.status_display.setReadOnly(True)
         self.left_layout.addWidget(self.status_display)
 
-        self.trade_list = QListWidget()
+        self.trade_list = QListWidget(self)
         self.right_layout.addWidget(QLabel("Recent Trades:"))
         self.right_layout.addWidget(self.trade_list)
 
@@ -336,6 +381,26 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
+
+    def update_interface(self):
+        try:
+            # Handels-Historie aktualisieren (GUI + CSV)
+            update_trade_list(self.trade_list)
+
+            # Portfolio-Tabelle aktualisieren (falls vorhanden)
+            self.update_portfolio_table()
+
+            # Charts aktualisieren
+            if hasattr(self, 'chart_window'):
+                print("[DEBUG] update_interface: has_attr chart_window")
+                for pair in self.chart_window.canvases:
+                    print(f"[DEBUG] work with {pair}")
+                    self.chart_window.update_chart(pair)
+                    print(f"[DEBUG] done with {pair}")
+
+
+        except Exception as e:
+            print(f"[ERROR] update_interface: {e}")
 
     def save_keys(self):
         global API_KEY, API_SECRET
@@ -391,11 +456,18 @@ class MainWindow(QMainWindow):
         SIMUL = not SIMUL
         self.status_display.append(f"[INFO] Modus gewechselt zu {'SIMUL' if SIMUL else 'REAL'}")
 
+    def update_portfolio_table(self):
+        # Später auf Wunsch hinzufügen oder leer lassen
+        pass
+
+
     def start_bot(self):
         if not self.bot_thread:
             perform_initial_trades()  # <<< hier der neue Initialkauf
+            if not self.chart_window:
+                self.chart_window = ChartWindow()
             self.bot_thread = BotThread()
-            self.bot_thread.update_gui.connect(self.update_trade_list)
+            self.bot_thread.update_gui.connect(self.update_interface)
             self.bot_thread.start()
             self.status_display.append("[INFO] Bot gestartet.")
 
@@ -449,10 +521,11 @@ class MainWindow(QMainWindow):
         )
         info.exec()
 
-
     def show_charts(self):
+        global chart_window_instance
         if not self.chart_window:
             self.chart_window = ChartWindow()
+            chart_window_instance = self.chart_window
         self.chart_window.show()
 
     def show_portfolio(self):
@@ -475,35 +548,7 @@ class MainWindow(QMainWindow):
             print("[ERROR] show_portfolio:", e)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Berechnen des Portfolios:\n{e}")
 
-    def update_trade_list(self):
-        try:
-            last_entry = TRADES[-1] if TRADES else None
-            if last_entry:
-                with open("trade_log.csv", mode="a", newline="", encoding="utf-8") as file:
-                    writer = csv.writer(file)
-                    parts = last_entry.split()
-                    if len(parts) >= 6 and "@" in last_entry:
-                        action = parts[1]
-                        volume = parts[2]
-                        pair = parts[3]
-                        price = parts[5]
-                        reason = last_entry.split("Grund:")[-1].strip()
-                        sim_label = "SIMUL" if "[SIMUL]" in last_entry else "REAL"
-                        now = datetime.now()
-                        writer.writerow([
-                            now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), pair,
-                            action.upper(), volume, price, sim_label, reason
-                        ])
-            self.trade_list.clear()  # ← jetzt korrekt
-            for entry in TRADES[-20:]:
-                self.trade_list.addItem(QListWidgetItem(entry))
-
-        except Exception as e:
-            print(f"[WARN] Logging in update_trade_list fehlgeschlagen: {e}")
-
-
-
-# ----------------- ChartWindow -----------------
+    # ----------------- ChartWindow -----------------
 class ChartWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -535,44 +580,21 @@ class ChartWindow(QWidget):
         tab_layout = QVBoxLayout()
         tab_layout.addWidget(canvas)
         widget.setLayout(tab_layout)
-
         self.tabs.addTab(widget, pair)
 
-        timer = QTimer()
-        timer.timeout.connect(lambda p=pair: self.plot(p))
-        timer.start(5000)
-        self.timers[pair] = timer
 
-    def plot(self, pair):
-        canvas, ax = self.canvases[pair]
-        ax.clear()
-        prices = PRICE_HISTORY.get(pair, [])
-        if not prices:
-            return
-        ax.plot(prices[-100:], label="Price", color="blue")
-
-                # Zusätzliche Linien
-        current_price = prices[-1]
-        next_buy = current_price * (1 - REENTRY_THRESHOLD)
-        next_sell = current_price * (1 + TAKE_PROFIT_DYNAMIC)
-        stop_loss = current_price * (1 - STOP_LOSS_DYNAMIC)
-        ax.axhline(y=next_buy, color="green", linestyle="--", label="Next Buy")
-        ax.axhline(y=next_sell, color="red", linestyle="--", label="Next Sell")
-        ax.axhline(y=stop_loss, color="orange", linestyle=":", label="Stop-Loss")
-
-        ax.set_title(f"{pair} – letzte 100 Preise")
-        ax.legend()
-        canvas.draw()
 
     def update_chart(self, pair):
         try:
-            if pair not in self.charts:
-                return
-            canvas,ax = self.charts[pair]
+            canvas, ax = self.canvases[pair]
             update_chart_lines(ax, pair)
             canvas.draw()
+            print(f"[DEBUG] Chart update OK für {pair}")
         except Exception as e:
             print(f"[ERROR] Chart update failed for {pair}: {e}")
+
+
+
 
 #######################
 if __name__ == "__main__":
