@@ -64,6 +64,17 @@ def calculate_trend(prices):
     slope, _ = np.polyfit(x, y, 1)
     return slope
 
+# ----------------- Fibonacci-Level -----------------
+def calculate_fibonacci_levels(prices):
+    if not prices:
+        return None, None, None
+    high = max(prices)
+    low = min(prices)
+    level_0 = high
+    level_382 = high - (high - low) * 0.382
+    level_618 = high - (high - low) * 0.618
+    return level_0, level_382, level_618
+
 # ----------------- Chart Update -----------------
 def update_chart_lines(ax, pair):
     ax.clear()
@@ -111,9 +122,10 @@ class BotThread(QThread):
                     rsi = calculate_rsi(PRICE_HISTORY[pair])
                     sma, upper, lower = calculate_bollinger(PRICE_HISTORY[pair])
                     trend = calculate_trend(PRICE_HISTORY[pair])
+                    fib0, fib382, fib618 = calculate_fibonacci_levels(PRICE_HISTORY[pair])
 
                     if rsi is not None and lower is not None and upper is not None:
-                        if rsi < 30 and price < lower and trend > 0:
+                        if rsi < 30 and price < lower and trend > 0 and fib618 and price <= fib618:
                             last_trade = LAST_TRADE_TIME.get(pair, 0)
                             if time.time() - last_trade < TRADE_COOLDOWN_SECONDS:
                                 print(f"[DEBUG] Kauf gesperrt für {pair}: Cooldown läuft.")
@@ -123,7 +135,7 @@ class BotThread(QThread):
                                 print(
                                     f"[DEBUG] Kein Reentry-Kauf für {pair}: Preis {price:.2f} nahe letztem Kauf {last_buy:.2f}.")
                                 continue
-                            execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}, Trend={trend:.2f}")
+                            execute_trade(pair, "buy", amount, price, f"Signal: RSI={rsi:.2f}, BB-Low={lower:.2f}, Trend={trend:.2f}, Fibo={fib618:.2f}")
                             LAST_TRADE_TIME[pair] = time.time()
                             LAST_BUY_PRICE[pair] = price
                         elif rsi > 70 and price > upper and trend < 0:
