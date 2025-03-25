@@ -42,6 +42,8 @@ LAST_TRADE_PRICE = {}
 MIN_PROFIT_EUR = 10.0
 MIN_PROFIT_PCT = 1.0
 CHART_LINES = {}
+LAST_LOGGED_TRADE = None
+
 
 chart_window_instance = None
 
@@ -121,9 +123,11 @@ def update_chart_lines(ax, pair):
 # ----------------- Update Trade-Liste (GUI + CSV Logging) -----------------
 def update_trade_list(gui_list_widget):
     try:
+        global LAST_LOGGED_TRADE
         last_entry = TRADES[-1] if TRADES else None
-        if last_entry:
-            with open("trade_log.csv", mode="a") as file:
+
+        if last_entry and last_entry != LAST_LOGGED_TRADE:
+            with open("trade_log.csv", mode="a", newline="", encoding="utf-8") as file:
                 writer = csv.writer(file)
                 parts = last_entry.split()
                 if len(parts) >= 6 and "@" in last_entry:
@@ -138,9 +142,11 @@ def update_trade_list(gui_list_widget):
                         now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), pair,
                         action.upper(), volume, price, sim_label, reason
                     ])
+            LAST_LOGGED_TRADE = last_entry  # nur wenn geschrieben
         gui_list_widget.clear()
         for entry in TRADES[-20:]:
             gui_list_widget.addItem(QListWidgetItem(entry))
+
     except Exception as e:
         print(f"[WARN] Logging in update_trade_list fehlgeschlagen: {e}")
 
