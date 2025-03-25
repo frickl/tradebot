@@ -76,26 +76,35 @@ def calculate_fibonacci_levels(prices):
     return level_0, level_382, level_618
 
 # ----------------- Chart Update -----------------
+
+# ----------------- Chart Linien aktualisieren inkl. Fibonacci -----------------
 def update_chart_lines(ax, pair):
-    ax.clear()
     prices = PRICE_HISTORY.get(pair, [])
     if not prices:
         return
+    ax.clear()
+    ax.plot(prices, label="Price", color="blue")
+    ax.set_title(f"{pair} – letzte {len(prices)} Preise")
 
-    x = np.arange(len(prices))
-    ax.plot(x, prices, label=pair)
+    # Dynamische Linien
+    if prices:
+        last_price = prices[-1]
+        next_buy = last_price * (1 - REENTRY_THRESHOLD)
+        next_sell = last_price * (1 + TAKE_PROFIT_DYNAMIC)
+        stop_loss = last_price * (1 - STOP_LOSS_DYNAMIC)
 
-    last_price = prices[-1]
-    next_buy = LAST_BUY_PRICE.get(pair, 0) * (1 - REENTRY_THRESHOLD)
-    next_sell = LAST_BUY_PRICE.get(pair, 0) * (1 + TAKE_PROFIT_DYNAMIC)
-    stop_loss = LAST_BUY_PRICE.get(pair, 0) * (1 - STOP_LOSS_DYNAMIC)
+        ax.axhline(y=next_buy, color="green", linestyle="--", label="Next Buy")
+        ax.axhline(y=next_sell, color="red", linestyle="--", label="Next Sell")
+        ax.axhline(y=stop_loss, color="orange", linestyle=":", label="Stop-Loss")
 
-    ax.axhline(y=next_buy, color='green', linestyle='--', label='Next Buy')
-    ax.axhline(y=next_sell, color='blue', linestyle='--', label='Next Sell')
-    ax.axhline(y=stop_loss, color='red', linestyle='--', label='Stop-Loss')
+        # Fibonacci-Linien
+        fib0, fib382, fib618 = calculate_fibonacci_levels(prices)
+        if fib0: ax.axhline(y=fib0, color="purple", linestyle="--", linewidth=1, label="Fibo 0.0")
+        if fib382: ax.axhline(y=fib382, color="purple", linestyle="--", linewidth=1, label="Fibo 38.2")
+        if fib618: ax.axhline(y=fib618, color="purple", linestyle="--", linewidth=1, label="Fibo 61.8")
 
-    ax.set_title(f"{pair} Chart mit Handelssignalen")
     ax.legend()
+
 
 # ----------------- BotThread -----------------
 class BotThread(QThread):
@@ -555,6 +564,15 @@ class ChartWindow(QWidget):
         ax.legend()
         canvas.draw()
 
+    def update_chart(self, pair):
+        try:
+            if pair not in self.charts:
+                return
+            canvas,ax = self.charts[pair]
+            update_chart_lines(ax, pair)
+            canvas.draw()
+        except Exception as e:
+            print(f"[ERROR] Chart update failed for {pair}: {e}")
 
 #######################
 if __name__ == "__main__":
