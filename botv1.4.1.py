@@ -352,6 +352,10 @@ class MainWindow(QMainWindow):
         self.portfolio_button.clicked.connect(self.show_portfolio)
         self.left_layout.addWidget(self.portfolio_button)
 
+        self.real_balance_button = QPushButton("Show Real Balance")
+        self.real_balance_button.clicked.connect(self.get_real_balance)
+        self.left_layout.addWidget(self.real_balance_button)
+
         self.add_pair_button = QPushButton("Add Pair")
         self.add_pair_button.clicked.connect(self.add_pair)
         self.left_layout.addWidget(self.add_pair_button)
@@ -426,23 +430,33 @@ class MainWindow(QMainWindow):
     def toggle_mode(self):
         global SIMUL, SIMUL_WALLET_VALUE, SIMUL_ASSETS
 
-        SIMUL = not SIMUL
-        if not SIMUL:
-            if not API_KEY or not API_SECRET:
+        print("[DEBUG] toggle_mode")
+
+        if SIMUL:
+            # Wechsel zu REAL
+            if not self.api_key or not self.api_secret:
                 QMessageBox.warning(self, "Fehler", "Bitte API-Key und Secret zuerst speichern.")
-                SIMUL = True
                 return
-            if not self.test_api_credentials():
-                QMessageBox.critical(self, "API-Fehler", "API-Verbindung fehlgeschlagen.")
-                SIMUL = True
+
+            ok, info = self.test_api_credentials()
+            if not ok:
+                QMessageBox.critical(self, "API-Fehler", f"API-Verbindung fehlgeschlagen:\n{info}")
                 return
+
+            SIMUL = False
             self.status_display.append("[REAL] Modus aktiviert. Achtung: Echter Handel möglich.")
+            print("[DEBUG] real-mode aktiviert")
         else:
+            # Wechsel zu SIMUL
+            SIMUL = True
             SIMUL_WALLET_VALUE = 1000.0
             for pair in SIMUL_ASSETS:
                 SIMUL_ASSETS[pair] = 0.0
             self.status_display.append("[SIMUL] Simulationsmodus aktiviert.")
+            print("[DEBUG] simul-mode aktiviert")
+
         self.mode_button.setText(f"Switch to {'Real' if SIMUL else 'Simulation'} Mode")
+
 
     def test_api_credentials(self):
         try:
@@ -598,6 +612,67 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "API-Test", f"✅ Erfolgreich: {info}")
         else:
             QMessageBox.critical(self, "API-Test", f"❌ Fehlgeschlagen:\n{info}")
+
+    def get_real_balance(self):
+        try:
+            decoded_secret = base64.b64decode(self.api_secret)
+            nonce = str(int(1000 * time.time()))
+            url_path = "/0/private/Balance"
+            url = f"{KRAKEN_API_URL}{url_path}"
+            post_data = {"nonce": nonce}
+            postdata = urllib.parse.urlencode(post_data)
+            encoded = (nonce + postdata).encode()
+            message = url_path.encode() + hashlib.sha256(encoded).digest()
+            signature = hmac.new(decoded_secret, message, hashlib.sha512)
+            sig_b64 = base64.b64encode(signature.digest())
+            headers = {
+                "API-Key": self.api_key,
+                "API-Sign": sig_b64.decode()
+            }
+            response = requests.post(url, headers=headers, data=post_data)
+
+            json_data = response.json()
+            if "result" in json_data:
+                balances = json_data["result"]
+                message = "\n".join([f"{k}: {v}" for k, v in balances.items()])
+                QMessageBox.information(self, "Real Balance", message)
+            else:
+                QMessageBox.warning(self, "Fehler", f"Fehlermeldung: {json_data.get('error')}")
+        except Exception as e:
+            print(f"[ERROR] Balance-Abfrage fehlgeschlagen: {e}")
+            QMessageBox.critical(self, "Fehler", f"Balance-Fehler: {e}")
+
+
+    def place_real_order(self, pair, side, volume, price):
+        try:
+            decoded_secret = base64.b64decode(self.api_secret)
+            nonce = str(int(1000 * time.time()))
+            url_path = "/0/private/AddOrder"
+            url = f"{KRAKEN_API_URL}{url_path}"
+            post_data = {
+                "nonce": nonce,
+                "ordertype": "limit",
+                "type": side,
+                "volume": str(volume),
+                "pair": pair,
+                "price": str(price)
+            }
+            postdata = urllib.parse.urlencode(post_data)
+            encoded = (nonce + postdata).encode()
+            message = url_path.encode() + hashlib.sha256(encoded).digest()
+            signature = hmac.new(decoded_secret, message, hashlib.sha512)
+            sig_b64 = base64.b64encode(signature.digest())
+            headers = {
+                "API-Key": self.api_key,
+                "API-Sign": sig_b64.decode()
+            }
+            response = requests.post(url, headers=headers, data=post_data)
+            print("[DEBUG] Real Order Antwort:", response.json())
+            return response.json()
+        except Exception as e:
+            print(f"[ERROR] Real Order fehlgeschlagen: {e}")
+            return None
+
 
     # ----------------- ChartWindow -----------------
 class ChartWindow(QWidget):
