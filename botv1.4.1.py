@@ -36,8 +36,6 @@ RSI_PERIOD = 14
 BOLLINGER_PERIOD = 20
 BOLLINGER_STD = 2.0
 KRAKEN_API_URL = "https://api.kraken.com"
-API_KEY = ""
-API_SECRET = ""
 LAST_TRADE_PRICE = {}
 MIN_PROFIT_EUR = 10.0
 MIN_PROFIT_PCT = 1.0
@@ -319,6 +317,8 @@ def get_available_pairs():
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.api_key = ""
+        self.api_secret = ""
         self.setWindowTitle("Kraken Trade Bot")
         self.setGeometry(100, 100, 1200, 600)
         self.bot_thread = None
@@ -339,6 +339,10 @@ class MainWindow(QMainWindow):
         self.save_button = QPushButton("Save API Keys")
         self.save_button.clicked.connect(self.save_keys)
         self.left_layout.addWidget(self.save_button)
+
+        self.api_test_button = QPushButton("Test API-Key")
+        self.api_test_button.clicked.connect(self.check_api_keys)
+        self.left_layout.addWidget(self.api_test_button)
 
         self.mode_button = QPushButton("Switch to Real Mode")
         self.mode_button.clicked.connect(self.toggle_mode)
@@ -409,16 +413,19 @@ class MainWindow(QMainWindow):
             print(f"[ERROR] update_interface: {e}")
 
     def save_keys(self):
-        global API_KEY, API_SECRET
-        API_KEY = self.api_key_input.text()
-        API_SECRET = self.api_secret_input.text()
-        if not API_KEY or not API_SECRET:
+        self.api_key = self.api_key_input.text().strip()
+        self.api_secret = self.api_secret_input.text().strip()
+
+        if not self.api_key or not self.api_secret:
             QMessageBox.warning(self, "Fehler", "Bitte gültige API-Daten eingeben.")
         else:
             self.status_display.append("[INFO] API-Daten gespeichert.")
+        print(f"[DEBUG] API_KEY: {repr(self.api_key)}")
+        print(f"[DEBUG] API_SECRET: {repr(self.api_secret)}")
 
     def toggle_mode(self):
         global SIMUL, SIMUL_WALLET_VALUE, SIMUL_ASSETS
+
         SIMUL = not SIMUL
         if not SIMUL:
             if not API_KEY or not API_SECRET:
@@ -439,28 +446,54 @@ class MainWindow(QMainWindow):
 
     def test_api_credentials(self):
         try:
+            # API-Secret dekodieren
+            try:
+                decoded_secret = base64.b64decode(self.api_secret)
+            except Exception as e:
+                return False, f"API Secret ist ungültig (base64-Fehler): {e}"
+
+            # Nonce generieren
             nonce = str(int(1000 * time.time()))
+
+            # API-Endpunkt definieren
             url_path = "/0/private/Balance"
             url = f"{KRAKEN_API_URL}{url_path}"
-            post_data = {"nonce": nonce}
-            post_data_encoded = urllib.parse.urlencode(post_data).encode()
-            message = (url_path.encode() + hashlib.sha256(post_data_encoded).digest())
-            signature = hmac.new(base64.b64decode(API_SECRET), message, hashlib.sha512)
+
+            # Daten für die Anfrage vorbereiten
+            post_data = {
+                'nonce': nonce
+            }
+            postdata = urllib.parse.urlencode(post_data)
+            encoded = (nonce + postdata).encode()
+
+            # Nachricht erstellen, die signiert wird
+            message = url_path.encode() + hashlib.sha256(encoded).digest()
+
+            # HMAC-Signatur erstellen
+            signature = hmac.new(decoded_secret, message, hashlib.sha512)
             sig_b64 = base64.b64encode(signature.digest())
+
+            # HTTP-Header erstellen
             headers = {
-                'API-Key': API_KEY,
+                'API-Key': self.api_key,
                 'API-Sign': sig_b64.decode()
             }
+
+            # API-Anfrage senden
             response = requests.post(url, headers=headers, data=post_data)
             if response.status_code != 200:
-                return False
+                print(f"[ERROR] API-Status: {response.status_code}")
+                return False, f"HTTP {response.status_code}"
             json_data = response.json()
-            return 'result' in json_data
+            print("[DEBUG] API Testantwort:", json_data)
+            if "result" in json_data:
+                return True, "API-Key ist gültig und verbunden."
+            else:
+                return False, str(json_data.get("error"))
         except Exception as e:
             print(f"[ERROR] API-Test fehlgeschlagen: {e}")
-            return False
-        SIMUL = not SIMUL
-        self.status_display.append(f"[INFO] Modus gewechselt zu {'SIMUL' if SIMUL else 'REAL'}")
+            return False, str(e)
+
 
     def update_portfolio_table(self):
         # Später auf Wunsch hinzufügen oder leer lassen
@@ -553,6 +586,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print("[ERROR] show_portfolio:", e)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Berechnen des Portfolios:\n{e}")
+
+    def check_api_keys(self):
+        try:
+            ok, info = self.test_api_credentials()
+        except Exception as e:
+            print(f"{e}")
+            return
+
+        if ok:
+            QMessageBox.information(self, "API-Test", f"✅ Erfolgreich: {info}")
+        else:
+            QMessageBox.critical(self, "API-Test", f"❌ Fehlgeschlagen:\n{info}")
 
     # ----------------- ChartWindow -----------------
 class ChartWindow(QWidget):
