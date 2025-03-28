@@ -3,8 +3,9 @@
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel,
     QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QHBoxLayout, QMessageBox,
-    QListWidget, QListWidgetItem, QInputDialog, QTabWidget
+    QListWidget, QListWidgetItem, QInputDialog, QTabWidget, QCheckBox
 )
+
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from datetime import datetime
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -41,9 +42,9 @@ MIN_PROFIT_EUR = 10.0
 MIN_PROFIT_PCT = 1.0
 CHART_LINES = {}
 LAST_LOGGED_TRADE = None
-
-
 chart_window_instance = None
+SAFE_BALANCES = {}  # Erlaubte Sockelbeträge geschützter Assets
+SAFE_ASSET_ALLOW_SELL = {}  # Dict: Asset -> Checkbox true/false
 
 # ----------------- Initialkäufe bei Botstart -----------------
 def perform_initial_trades():
@@ -319,6 +320,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.api_key = ""
         self.api_secret = ""
+        self.safe_asset_checkboxes = {}
         self.setWindowTitle("Kraken Trade Bot")
         self.setGeometry(100, 100, 1200, 600)
         self.bot_thread = None
@@ -355,6 +357,10 @@ class MainWindow(QMainWindow):
         self.real_balance_button = QPushButton("Show Real Balance")
         self.real_balance_button.clicked.connect(self.get_real_balance)
         self.left_layout.addWidget(self.real_balance_button)
+
+        self.active_pairs_button = QPushButton("Show Active Pairs")
+        self.active_pairs_button.clicked.connect(self.show_active_pairs)
+        self.left_layout.addWidget(self.active_pairs_button)
 
         self.add_pair_button = QPushButton("Add Pair")
         self.add_pair_button.clicked.connect(self.add_pair)
@@ -396,6 +402,32 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+    def show_active_pairs(self):
+        try:
+            if not TRADE_PAIRS:
+                QMessageBox.information(self, "Aktive Paare", "Es sind derzeit keine aktiven Paare konfiguriert.")
+                return
+
+            lines = []
+            for pair in TRADE_PAIRS:
+                base = pair[:-4] if pair.endswith("EUR") else pair[:3]
+                sockel = 0.0
+                for asset in SAFE_BALANCES:
+                    if asset.endswith(base):  # z.B. XXBT vs XBT
+                        sockel = SAFE_BALANCES.get(asset, 0.0)
+                        erlaubt = SAFE_ASSET_ALLOW_SELL.get(asset, False)
+                        lines.append(
+                            f"{pair} – Sockel: {sockel:.4f} {'(verkaufen erlaubt)' if erlaubt else '(verkauf gesperrt)'}")
+                        break
+                else:
+                    lines.append(f"{pair} – Sockel: 0.0000 (verkauf gesperrt)")
+
+            QMessageBox.information(self, "Aktive Handelspaare", "\n".join(lines))
+        except Exception as e:
+            print(f"[ERROR] show_active_pairs: {e}")
+            QMessageBox.warning(self, "Fehler", f"Fehler beim Anzeigen der Paare: {e}")
+
+
     def update_interface(self):
         try:
             # Handels-Historie aktualisieren (GUI + CSV)
@@ -428,34 +460,72 @@ class MainWindow(QMainWindow):
         print(f"[DEBUG] API_SECRET: {repr(self.api_secret)}")
 
     def toggle_mode(self):
-        global SIMUL, SIMUL_WALLET_VALUE, SIMUL_ASSETS
+        global SIMUL, SIMUL_WALLET_VALUE, SIMUL_ASSETS, SAFE_BALANCES, SAFE_ASSET_ALLOW_SELL
 
-        print("[DEBUG] toggle_mode")
+        SIMUL = not SIMUL
+        print("[DEBUG] toggle-mode")
 
-        if SIMUL:
-            # Wechsel zu REAL
+        if not SIMUL:
             if not self.api_key or not self.api_secret:
                 QMessageBox.warning(self, "Fehler", "Bitte API-Key und Secret zuerst speichern.")
+                SIMUL = True
                 return
-
-            ok, info = self.test_api_credentials()
+            ok = self.test_api_credentials()
             if not ok:
-                QMessageBox.critical(self, "API-Fehler", f"API-Verbindung fehlgeschlagen:\n{info}")
+                QMessageBox.critical(self, "API-Fehler", "API-Verbindung fehlgeschlagen.")
+                SIMUL = True
                 return
 
-            SIMUL = False
+            try:
+                balances = self.get_real_balance()
+                SAFE_BALANCES = {}
+                SAFE_ASSET_ALLOW_SELL = {}
+                info_lines = []
+                for asset, value in balances.items():
+                    val = float(value)
+                    if val > 0:
+                        SAFE_BALANCES[asset] = val
+
+                        # EUR-Assets automatisch erlauben (für Käufe)
+                        if asset.endswith("EUR"):
+                            continue
+
+
+                        SAFE_ASSET_ALLOW_SELL[asset] = False
+                        cb = QCheckBox(f"{asset}: {val:.4f} freigeben")
+                        cb.stateChanged.connect(lambda state, a=asset: self.set_asset_permission(a, state))
+                        self.safe_asset_checkboxes[asset] = cb
+                        self.left_layout.addWidget(cb)
+                        info_lines.append(f"{asset}: {val:.4f}")
+                QMessageBox.information(self, "Vorhandene Assets", "\n".join(info_lines) +
+                                        "\n\nNur freigegebene Assets dürfen verkauft werden. Siehe Optionen.")
+            except Exception as e:
+                print(f"[ERROR] Real-Balance Abfrage fehlgeschlagen: {e}")
+                QMessageBox.warning(self, "Balance", f"Fehler beim Abrufen des Kontos:\n{e}")
+                SIMUL = True
+                return
+
             self.status_display.append("[REAL] Modus aktiviert. Achtung: Echter Handel möglich.")
-            print("[DEBUG] real-mode aktiviert")
         else:
-            # Wechsel zu SIMUL
-            SIMUL = True
             SIMUL_WALLET_VALUE = 1000.0
             for pair in SIMUL_ASSETS:
                 SIMUL_ASSETS[pair] = 0.0
             self.status_display.append("[SIMUL] Simulationsmodus aktiviert.")
-            print("[DEBUG] simul-mode aktiviert")
 
         self.mode_button.setText(f"Switch to {'Real' if SIMUL else 'Simulation'} Mode")
+
+
+    def set_asset_permission(self, asset, state):
+        SAFE_ASSET_ALLOW_SELL[asset] = state == Qt.CheckState.Checked
+
+    def can_sell(self, asset, volume):
+        if SIMUL:
+            return True
+        sockel = SAFE_BALANCES.get(asset, 0.0)
+        erlaubt = SAFE_ASSET_ALLOW_SELL.get(asset, False)
+        if erlaubt:
+            return (SAFE_BALANCES.get(asset, 0.0) - volume) >= sockel
+        return False
 
 
     def test_api_credentials(self):
@@ -584,22 +654,32 @@ class MainWindow(QMainWindow):
     def show_portfolio(self):
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Portfolio")
+
         try:
-            message = "Wallet: {:.2f} EUR\n".format(SIMUL_WALLET_VALUE)
-            total = SIMUL_WALLET_VALUE
-            for pair, amount in SIMUL_ASSETS.items():
-                price = fetch_price(pair)
-                value = amount * price if price else 0
-                message += "{}: {:.4f} = {:.2f} EUR\n".format(pair, amount, value)
-                total += value
-            gain = total - 1000.0
-            pct = (gain / 1000.0) * 100
-            message += "\nGesamtwert: {:.2f} EUR\nGewinn/Verlust: {:+.2f} EUR ({:+.2f}%)".format(total, gain, pct)
+            if SIMUL:
+                message = "Wallet: {:.2f} EUR\n".format(SIMUL_WALLET_VALUE)
+                total = SIMUL_WALLET_VALUE
+                for pair, amount in SIMUL_ASSETS.items():
+                    price = fetch_price(pair)
+                    value = amount * price if price else 0
+                    message += "{}: {:.4f} = {:.2f} EUR\n".format(pair, amount, value)
+                    total += value
+                gain = total - 1000.0
+                pct = (gain / 1000.0) * 100
+                message += "\nGesamtwert: {:.2f} EUR\nGewinn/Verlust: {:+.2f} EUR ({:+.2f}%)".format(total, gain, pct)
+            else:
+                balances = self.get_real_balance()
+                message = "📊 Real-Konto:\n\n"
+                for asset, value in balances.items():
+                    message += f"{asset}: {float(value):.4f}\n"
+
             dialog.setText(message)
             dialog.exec()
         except Exception as e:
             print("[ERROR] show_portfolio:", e)
             QMessageBox.warning(self, "Fehler", f"Fehler beim Berechnen des Portfolios:\n{e}")
+
+
 
     def check_api_keys(self):
         try:
@@ -615,32 +695,25 @@ class MainWindow(QMainWindow):
 
     def get_real_balance(self):
         try:
-            decoded_secret = base64.b64decode(self.api_secret)
             nonce = str(int(1000 * time.time()))
             url_path = "/0/private/Balance"
-            url = f"{KRAKEN_API_URL}{url_path}"
             post_data = {"nonce": nonce}
-            postdata = urllib.parse.urlencode(post_data)
-            encoded = (nonce + postdata).encode()
-            message = url_path.encode() + hashlib.sha256(encoded).digest()
-            signature = hmac.new(decoded_secret, message, hashlib.sha512)
+            post_data_encoded = urllib.parse.urlencode(post_data)
+            message = url_path.encode() + hashlib.sha256((nonce + post_data_encoded).encode()).digest()
+            signature = hmac.new(base64.b64decode(self.api_secret), message, hashlib.sha512)
             sig_b64 = base64.b64encode(signature.digest())
             headers = {
-                "API-Key": self.api_key,
-                "API-Sign": sig_b64.decode()
+                'API-Key': self.api_key,
+                'API-Sign': sig_b64.decode()
             }
+            url = f"{KRAKEN_API_URL}{url_path}"
             response = requests.post(url, headers=headers, data=post_data)
-
-            json_data = response.json()
-            if "result" in json_data:
-                balances = json_data["result"]
-                message = "\n".join([f"{k}: {v}" for k, v in balances.items()])
-                QMessageBox.information(self, "Real Balance", message)
-            else:
-                QMessageBox.warning(self, "Fehler", f"Fehlermeldung: {json_data.get('error')}")
+            if response.status_code == 200:
+                return response.json().get("result", {})
+            return {}
         except Exception as e:
-            print(f"[ERROR] Balance-Abfrage fehlgeschlagen: {e}")
-            QMessageBox.critical(self, "Fehler", f"Balance-Fehler: {e}")
+            print(f"[ERROR] get_real_balance: {e}")
+            return {}
 
 
     def place_real_order(self, pair, side, volume, price):
@@ -706,16 +779,61 @@ class ChartWindow(QWidget):
         tab_layout = QVBoxLayout()
         tab_layout.addWidget(canvas)
         widget.setLayout(tab_layout)
+
         self.tabs.addTab(widget, pair)
 
+        timer = QTimer()
+        timer.timeout.connect(lambda p=pair: self.plot(p))
+        timer.start(5000)
+        self.timers[pair] = timer
 
+
+    def plot(self, pair):
+        canvas, ax = self.canvases[pair]
+        ax.clear()
+        prices = PRICE_HISTORY.get(pair, [])
+        if not prices:
+            return
+        ax.plot(prices[-100:], label="Price", color="blue")
+
+        # Trendpfeil (einfacher linearer Trend)
+        if len(prices) >= 10:
+            x = np.arange(len(prices[-10:]))
+            y = np.array(prices[-10:])
+            slope, _ = np.polyfit(x, y, 1)
+            trend = "↑" if slope > 0 else "↓"
+            ax.set_title(f"{pair} – letzte 100 Preise   Trend: {trend}")
+        else:
+            ax.set_title(f"{pair} – letzte 100 Preise")
+
+        # Zusätzliche Linien
+        current_price = prices[-1]
+        next_buy = current_price * (1 - REENTRY_THRESHOLD)
+        next_sell = current_price * (1 + TAKE_PROFIT_DYNAMIC)
+        stop_loss = current_price * (1 - STOP_LOSS_DYNAMIC)
+        ax.axhline(y=next_buy, color="green", linestyle="--", label="Next Buy")
+        ax.axhline(y=next_sell, color="red", linestyle="--", label="Next Sell")
+        ax.axhline(y=stop_loss, color="orange", linestyle=":", label="Stop-Loss")
+
+        # Fibonacci-Linien
+        high = max(prices)
+        low = min(prices)
+        fib_0 = high
+        fib_382 = high - (high - low) * 0.382
+        fib_618 = high - (high - low) * 0.618
+        ax.axhline(y=fib_0, color="purple", linestyle="--", label="Fibo 0.0")
+        ax.axhline(y=fib_382, color="purple", linestyle="--", label="Fibo 38.2")
+        ax.axhline(y=fib_618, color="purple", linestyle="--", label="Fibo 61.8")
+
+        ax.legend()
+        canvas.draw()
 
     def update_chart(self, pair):
         try:
+            if pair not in self.canvases:
+                return
             canvas, ax = self.canvases[pair]
-            update_chart_lines(ax, pair)
-            canvas.draw()
-            print(f"[DEBUG] Chart update OK für {pair}")
+            self.plot(pair)
         except Exception as e:
             print(f"[ERROR] Chart update failed for {pair}: {e}")
 
